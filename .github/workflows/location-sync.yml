@@ -21,10 +21,74 @@ jobs:
           # 截断过长的位置信息
           LOCATION=$(echo "$LOCATION" | cut -c1-1900)
           
+          # 查询 Notion 最新一条记录
+          LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${{ secrets.NOTION_DATABASE_ID }}/query" \
+            -H "Authorization: Bearer ${{ secrets.NOTION_TOKEN }}" \
+            -H "Notion-Version: 2022-06-28" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "page_size": 1,
+              "sorts": [{ "timestamp": "created_time", "direction": "descending" }]
+            }' | grep -o '"位置":{[^}]*"rich_text":\[{[^}]*"plain_text":"[^"]*"' | sed 's/.*"plain_text":"\([^"]*\)".*/\1/')
+          
+          # 如果位置相同，跳过
+          if [ "$LOCATION" = "$LAST_LOCATION" ]; then
+            echo "位置与上次相同，跳过同步: $LOCATION"
+            exit 0
+          fi
+          
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
-          # 解析城市
-          CITY=$(echo "$LOCATION" | grep -oE '北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|苏州|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|哈尔滨|沈阳|济南|昆明|南宁|太原|南昌|贵阳|兰州|海口|三亚|珠海|中山|惠州|常州|烟台|绍兴|嘉兴|金华|汕头|湛江|江门|茂名|梅州|阳江|韶关|潮州|云浮|汕尾' | head -1)
+          # ========== 识别国家 ==========
+          # 中文国家名
+          COUNTRY=$(echo "$LOCATION" | grep -oE '中国|美国|日本|韩国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新西兰|新加坡|马来西亚|泰国|越南|印度|俄罗斯|巴西|墨西哥|荷兰|瑞士|瑞典|挪威|丹麦|芬兰|比利时|奥地利|爱尔兰|葡萄牙|希腊|波兰|捷克|匈牙利|土耳其|以色列|阿联酋|沙特|南非|埃及|尼日利亚|阿根廷|智利|哥伦比亚|秘鲁|菲律宾|印度尼西亚|巴基斯坦|孟加拉|缅甸|柬埔寨|老挝|蒙古|朝鲜|哈萨克斯坦|乌克兰|白俄罗斯|罗马尼亚|保加利亚|塞尔维亚|克罗地亚|斯洛文尼亚|斯洛伐克|冰岛|卢森堡|摩纳哥|梵蒂冈' | head -1)
+          
+          # 如果没找到，尝试匹配英文国家名
+          if [ -z "$COUNTRY" ]; then
+            COUNTRY=$(echo "$LOCATION" | grep -oiE 'China|USA|United States|Japan|Korea|South Korea|UK|United Kingdom|Britain|France|Germany|Italy|Spain|Canada|Australia|New Zealand|Singapore|Malaysia|Thailand|Vietnam|India|Russia|Brazil|Mexico|Netherlands|Switzerland|Sweden|Norway|Denmark|Finland|Belgium|Austria|Ireland|Portugal|Greece|Poland|Czech|Turkey|Israel|UAE|Saudi Arabia|South Africa|Egypt|Argentina|Chile|Colombia|Peru|Philippines|Indonesia|Pakistan|Bangladesh' | head -1)
+            # 英文转中文
+            case "$COUNTRY" in
+              China) COUNTRY="中国" ;;
+              USA|United\ States) COUNTRY="美国" ;;
+              Japan) COUNTRY="日本" ;;
+              Korea|South\ Korea) COUNTRY="韩国" ;;
+              UK|United\ Kingdom|Britain) COUNTRY="英国" ;;
+              France) COUNTRY="法国" ;;
+              Germany) COUNTRY="德国" ;;
+              Italy) COUNTRY="意大利" ;;
+              Spain) COUNTRY="西班牙" ;;
+              Canada) COUNTRY="加拿大" ;;
+              Australia) COUNTRY="澳大利亚" ;;
+              "New Zealand") COUNTRY="新西兰" ;;
+              Singapore) COUNTRY="新加坡" ;;
+              Malaysia) COUNTRY="马来西亚" ;;
+              Thailand) COUNTRY="泰国" ;;
+              Vietnam) COUNTRY="越南" ;;
+              India) COUNTRY="印度" ;;
+              Russia) COUNTRY="俄罗斯" ;;
+              Brazil) COUNTRY="巴西" ;;
+              Mexico) COUNTRY="墨西哥" ;;
+              Netherlands) COUNTRY="荷兰" ;;
+              Switzerland) COUNTRY="瑞士" ;;
+            esac
+          fi
+          
+          [ -z "$COUNTRY" ] && COUNTRY="未知"
+          
+          # ========== 识别城市 ==========
+          # 优先匹配中文 "XX市" 格式
+          CITY=$(echo "$LOCATION" | grep -oE '[^\s]+市' | head -1 | sed 's/市$//')
+          
+          # 如果没找到，尝试匹配 "省XX市" 格式
+          if [ -z "$CITY" ]; then
+            CITY=$(echo "$LOCATION" | grep -oE '省[^\s]+市' | sed 's/省//;s/市$//' | head -1)
+          fi
+          
+          # 如果还没找到，尝试匹配国际城市（英文）
+          if [ -z "$CITY" ]; then
+            CITY=$(echo "$LOCATION" | grep -oE '([A-Z][a-z]+ ?)+' | grep -vE '^(China|USA|UK|Japan|Korea|Street|Road|Avenue|District|State|Province|Country)$' | head -1 | sed 's/ $//')
+          fi
+          
           [ -z "$CITY" ] && CITY="未知"
           
           # 写入临时文件避免 JSON 转义问题
@@ -34,7 +98,8 @@ jobs:
             "properties": {
               "时间": { "date": { "start": "$TIMESTAMP" } },
               "位置": { "rich_text": [{ "text": { "content": "$LOCATION" } }] },
-              "城市": { "select": { "name": "$CITY" } }
+              "城市": { "select": { "name": "$CITY" } },
+              "国家": { "select": { "name": "$COUNTRY" } }
             }
           }
           EOF
@@ -45,4 +110,4 @@ jobs:
             -H "Content-Type: application/json" \
             -d @/tmp/payload.json
           
-          echo "已同步: $LOCATION -> $CITY"
+          echo "已同步: $LOCATION -> $CITY, $COUNTRY"
