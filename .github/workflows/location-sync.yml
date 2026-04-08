@@ -17,23 +17,29 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          RAW_LOCATION: ${{ github.event.client_payload.location || inputs.location }}
         run: |
-          RAW_LOCATION='${{ github.event.client_payload.location || inputs.location }}'
+          # 从 JSON 中提取 location 值
+          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
           
-          # 清理位置字符串（处理换行符）
-          LOCATION=$(echo "$RAW_LOCATION" | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
+          # 清理多余空格
+          LOCATION=$(echo "$LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
           
-          echo "原始位置: $LOCATION"
+          # 截断过长的位置信息
+          LOCATION=$(echo "$LOCATION" | cut -c1-1900)
           
-          # 提取城市（优先匹配"XX市"格式）
+          echo "位置: $LOCATION"
+          
+          # 提取城市
           CITY=$(echo "$LOCATION" | grep -oE '[^ ]+市' | head -1 | sed 's/市$//')
           
-          # 如果没找到，尝试匹配常见中文城市名
           if [ -z "$CITY" ]; then
             CITY=$(echo "$LOCATION" | grep -oE '深圳|北京|上海|广州|杭州|成都|武汉|南京|苏州|天津|重庆|西安|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|合肥|济南|昆明|南昌|南宁|贵阳|海口|兰州|石家庄|太原|沈阳|长春|哈尔滨' | head -1)
           fi
           
-          echo "提取的城市: $CITY"
+          [ -z "$CITY" ] && CITY="未知"
+          
+          echo "城市: $CITY"
           
           # 提取国家
           COUNTRY=""
@@ -43,67 +49,46 @@ jobs:
             COUNTRY="中国"
           else
             COUNTRY=$(echo "$LOCATION" | grep -oE '日本|韩国|美国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新加坡|马来西亚|泰国|越南|印度' | head -1)
-            if [ -z "$COUNTRY" ]; then
-              ENG_COUNTRY=$(echo "$LOCATION" | grep -oEi 'Japan|Korea|USA|United States|UK|France|Germany|Italy|Spain|Canada|Australia|Singapore|Malaysia|Thailand|Vietnam|India' | head -1)
-              case "$ENG_COUNTRY" in
-                Japan) COUNTRY="日本" ;;
-                Korea) COUNTRY="韩国" ;;
-                USA|United\ States) COUNTRY="美国" ;;
-                UK) COUNTRY="英国" ;;
-                France) COUNTRY="法国" ;;
-                Germany) COUNTRY="德国" ;;
-                Italy) COUNTRY="意大利" ;;
-                Spain) COUNTRY="西班牙" ;;
-                Canada) COUNTRY="加拿大" ;;
-                Australia) COUNTRY="澳大利亚" ;;
-                Singapore) COUNTRY="新加坡" ;;
-                Malaysia) COUNTRY="马来西亚" ;;
-                Thailand) COUNTRY="泰国" ;;
-                Vietnam) COUNTRY="越南" ;;
-                India) COUNTRY="印度" ;;
-              esac
-            fi
           fi
           
-          echo "提取的国家: $COUNTRY"
+          [ -z "$COUNTRY" ] && COUNTRY="未知"
           
-          # 提取简略位置（去掉国家和省市区）
+          echo "国家: $COUNTRY"
+          
+          # 提取简略位置
           BRIEF_LOCATION="$LOCATION"
           
-          # 去掉国家
-          if [ -n "$COUNTRY" ]; then
+          if [ "$COUNTRY" != "未知" ]; then
             BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed "s/$COUNTRY//g")
           fi
           
-          # 去掉省份（XX省格式）
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*省//g')
-          
-          # 去掉城市（XX市格式）
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*市//g')
-          
-          # 清理多余空格
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
+          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | cut -c1-1900)
           
           echo "简略位置: $BRIEF_LOCATION"
           
-          # 获取当前时间
-          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
-          # 同步到 Notion
-          RESPONSE=$(curl -s -X POST "https://api.notion.com/v1/pages" \
+          # 写入临时文件
+          cat > /tmp/payload.json << EOF
+          {
+            "parent": { "database_id": "${NOTION_DATABASE_ID}" },
+            "properties": {
+              "时间": { "date": { "start": "$TIMESTAMP" } },
+              "位置": { "rich_text": [{ "text": { "content": "$LOCATION" } }] },
+              "简略位置": { "rich_text": [{ "text": { "content": "$BRIEF_LOCATION" } }] },
+              "城市": { "select": { "name": "$CITY" } },
+              "国家": { "select": { "name": "$COUNTRY" } }
+            }
+          }
+          EOF
+          
+          curl -X POST "https://api.notion.com/v1/pages" \
             -H "Authorization: Bearer ${NOTION_TOKEN}" \
             -H "Notion-Version: 2022-06-28" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"parent\": {\"database_id\": \"${NOTION_DATABASE_ID}\"},
-              \"properties\": {
-                \"时间\": {\"date\": {\"start\": \"${CURRENT_TIME}\"}},
-                \"位置\": {\"rich_text\": [{\"text\": {\"content\": \"${LOCATION}\"}}]},
-                \"简略位置\": {\"rich_text\": [{\"text\": {\"content\": \"${BRIEF_LOCATION}\"}}]},
-                \"城市\": {\"select\": {\"name\": \"${CITY}\"}},
-                \"国家\": {\"select\": {\"name\": \"${COUNTRY}\"}}
-              }
-            }")
+            -d @/tmp/payload.json
           
-          echo "响应: $RESPONSE"
           echo "已同步: $LOCATION -> 简略: $BRIEF_LOCATION, 城市: $CITY, 国家: $COUNTRY"
