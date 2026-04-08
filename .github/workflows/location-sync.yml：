@@ -1,28 +1,25 @@
 name: Location Sync
 
 on:
-  repository_dispatch:
-    types: [location-update]
+  workflow_dispatch:
+    inputs:
+      location:
+        description: '位置信息'
+        required: true
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Parse and sync to Notion
+      - name: Sync to Notion
         run: |
-          # 从 payload 提取位置信息
-          LOCATION="${{ github.event.client_payload.location }}"
-          TIMESTAMP="${{ github.event.client_payload.timestamp }}"
+          LOCATION="${{ github.event.inputs.location }}"
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
-          # 解析城市（简单映射，可根据需要扩展）
-          CITY=$(echo "$LOCATION" | grep -oE '北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|苏州|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|哈尔滨|沈阳|济南|昆明|南宁|太原|南昌|贵阳|兰州|海口|三亚|珠海|中山|惠州|常州|徐州|烟台|绍兴|台州|嘉兴|金华|珠海|汕头|湛江|江门|肇庆|茂名|清远|揭阳|梅州|河源|阳江|韶关|潮州|云浮|汕尾|东莞市|中山市' | head -1)
+          # 解析城市
+          CITY=$(echo "$LOCATION" | grep -oE '北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|苏州|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|哈尔滨|沈阳|济南|昆明|南宁|太原|南昌|贵阳|兰州|海口|三亚|珠海|中山|惠州|常州|烟台|绍兴|嘉兴|金华|汕头|湛江|江门|茂名|梅州|阳江|韶关|潮州|云浮|汕尾' | head -1)
+          [ -z "$CITY" ] && CITY="未知"
           
-          # 如果没匹配到，默认用"未知"
-          if [ -z "$CITY" ]; then
-            CITY="未知"
-          fi
-          
-          # 调用 Notion API
           curl -X POST "https://api.notion.com/v1/pages" \
             -H "Authorization: Bearer ${{ secrets.NOTION_TOKEN }}" \
             -H "Notion-Version: 2022-06-28" \
@@ -35,3 +32,5 @@ jobs:
                 "城市": { "select": { "name": "'"$CITY"'" } }
               }
             }'
+          
+          echo "已同步: $LOCATION -> $CITY"
