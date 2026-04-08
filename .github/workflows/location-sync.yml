@@ -1,94 +1,48 @@
-name: Location Sync to Notion
+name: Location Sync
+
 on:
-  repository_dispatch:
-    types: [location-sync]
   workflow_dispatch:
     inputs:
       location:
-        description: 'Location string'
+        description: '位置信息'
         required: true
-        default: ''
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Parse location and sync to Notion
+      - name: Sync to Notion
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          RAW_LOCATION: ${{ github.event.client_payload.location || inputs.location }}
+          RAW_LOCATION: ${{ github.event.inputs.location }}
         run: |
           # 从 JSON 中提取 location 值
-          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
-          
-          # 清理多余空格
-          LOCATION=$(echo "$LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
+          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | tr '\n' ' ' | tr '\r' ' ')
           
           # 截断过长的位置信息
           LOCATION=$(echo "$LOCATION" | cut -c1-1900)
           
-          echo "位置: $LOCATION"
-          
-          # 提取城市
-          CITY=$(echo "$LOCATION" | grep -oE '[^ ]+市' | head -1 | sed 's/市$//')
-          
-          if [ -z "$CITY" ]; then
-            CITY=$(echo "$LOCATION" | grep -oE '深圳|北京|上海|广州|杭州|成都|武汉|南京|苏州|天津|重庆|西安|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|合肥|济南|昆明|南昌|南宁|贵阳|海口|兰州|石家庄|太原|沈阳|长春|哈尔滨' | head -1)
-          fi
-          
-          [ -z "$CITY" ] && CITY="未知"
-          
-          echo "城市: $CITY"
-          
-          # 提取国家
-          COUNTRY=""
-          if echo "$LOCATION" | grep -q "中国"; then
-            COUNTRY="中国"
-          elif echo "$LOCATION" | grep -qi "china"; then
-            COUNTRY="中国"
-          else
-            COUNTRY=$(echo "$LOCATION" | grep -oE '日本|韩国|美国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新加坡|马来西亚|泰国|越南|印度' | head -1)
-          fi
-          
-          [ -z "$COUNTRY" ] && COUNTRY="未知"
-          
-          echo "国家: $COUNTRY"
-          
-          # 提取简略位置
-          BRIEF_LOCATION="$LOCATION"
-          
-          if [ "$COUNTRY" != "未知" ]; then
-            BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed "s/$COUNTRY//g")
-          fi
-          
-          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*省//g')
-          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*市//g')
-          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
-          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | cut -c1-1900)
-          
-          echo "简略位置: $BRIEF_LOCATION"
-          
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
-          # 写入临时文件
+          # 解析城市
+          CITY=$(echo "$LOCATION" | grep -oE '北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|苏州|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|哈尔滨|沈阳|济南|昆明|南宁|太原|南昌|贵阳|兰州|海口|三亚|珠海|中山|惠州|常州|烟台|绍兴|嘉兴|金华|汕头|湛江|江门|茂名|梅州|阳江|韶关|潮州|云浮|汕尾' | head -1)
+          [ -z "$CITY" ] && CITY="未知"
+          
+          # 写入临时文件避免 JSON 转义问题
           cat > /tmp/payload.json << EOF
           {
-            "parent": { "database_id": "${NOTION_DATABASE_ID}" },
+            "parent": { "database_id": "${{ secrets.NOTION_DATABASE_ID }}" },
             "properties": {
               "时间": { "date": { "start": "$TIMESTAMP" } },
               "位置": { "rich_text": [{ "text": { "content": "$LOCATION" } }] },
-              "简略位置": { "rich_text": [{ "text": { "content": "$BRIEF_LOCATION" } }] },
-              "城市": { "select": { "name": "$CITY" } },
-              "国家": { "select": { "name": "$COUNTRY" } }
+              "城市": { "select": { "name": "$CITY" } }
             }
           }
           EOF
           
           curl -X POST "https://api.notion.com/v1/pages" \
-            -H "Authorization: Bearer ${NOTION_TOKEN}" \
+            -H "Authorization: Bearer ${{ secrets.NOTION_TOKEN }}" \
             -H "Notion-Version: 2022-06-28" \
             -H "Content-Type: application/json" \
             -d @/tmp/payload.json
           
-          echo "已同步: $LOCATION -> 简略: $BRIEF_LOCATION, 城市: $CITY, 国家: $COUNTRY"
+          echo "已同步: $LOCATION -> $CITY"
