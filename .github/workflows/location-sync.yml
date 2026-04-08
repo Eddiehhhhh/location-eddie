@@ -20,15 +20,8 @@ jobs:
         run: |
           RAW_LOCATION='${{ github.event.client_payload.location || inputs.location }}'
           
-          # 隐藏位置信息
-          echo "::add-mask::$RAW_LOCATION"
-          
           # 从 JSON 中提取 location 值
           LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
-          
-          # 隐藏提取后的位置
-          echo "::add-mask::$LOCATION"
-          echo "::add-mask::$BRIEF_LOCATION"
           
           # 清理多余空格
           LOCATION=$(echo "$LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
@@ -67,7 +60,7 @@ jobs:
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*省//g')
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/[^ ]*市//g')
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
-          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | cut -c1-1900)
+          BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | cut -c1-100)
           
           # 查询Notion最新记录，检查是否重复
           LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
@@ -83,11 +76,12 @@ jobs:
           
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
-          # 写入临时文件
+          # 写入临时文件 - 简略位置作为标题
           cat > /tmp/payload.json << EOF
           {
             "parent": { "database_id": "${NOTION_DATABASE_ID}" },
             "properties": {
+              "名称": { "title": [{ "text": { "content": "$BRIEF_LOCATION" } }] },
               "时间": { "date": { "start": "$TIMESTAMP" } },
               "位置": { "rich_text": [{ "text": { "content": "$LOCATION" } }] },
               "简略位置": { "rich_text": [{ "text": { "content": "$BRIEF_LOCATION" } }] },
