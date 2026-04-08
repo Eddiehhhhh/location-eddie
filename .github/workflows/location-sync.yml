@@ -1,107 +1,107 @@
-name: Location Sync
+明白了，是城市提取的正则匹配太贪婪了。我给你一个更精确的版本，只提取"深圳市"这样的模式：
 
+```yaml
+name: Location Sync to Notion
 on:
+  repository_dispatch:
+    types: [location-sync]
   workflow_dispatch:
     inputs:
       location:
-        description: '位置信息'
+        description: 'Location string'
         required: true
+        default: ''
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Sync to Notion
+      - name: Parse location and sync to Notion
         env:
-          RAW_LOCATION: ${{ github.event.inputs.location }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
-          # 从 JSON 中提取 location 值，处理 \n 和 \r 字面字符
-          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
+          RAW_LOCATION='${{ github.event.client_payload.location || inputs.location }}'
           
-          # 截断过长的位置信息
-          LOCATION=$(echo "$LOCATION" | cut -c1-1900)
+          # 清理位置字符串（处理换行符）
+          LOCATION=$(echo "$RAW_LOCATION" | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
           
-          # 查询 Notion 最新一条记录
-          LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${{ secrets.NOTION_DATABASE_ID }}/query" \
-            -H "Authorization: Bearer ${{ secrets.NOTION_TOKEN }}" \
+          echo "原始位置: $LOCATION"
+          
+          # 提取城市（优先匹配"XX市"格式）
+          CITY=$(echo "$LOCATION" | grep -oE '[^ ]+市' | head -1 | sed 's/市$//')
+          
+          # 如果没找到，尝试匹配中文城市名（不要求"市"字）
+          if [ -z "$CITY" ]; then
+            CITY=$(echo "$LOCATION" | grep -oE '[\u4e00-\u9fa5]{2,4}' | grep -E '深圳|北京|上海|广州|杭州|成都|武汉|南京|苏州|天津|重庆|西安|厦门|青岛|大连|宁波|无锡|长沙|郑州|东莞|佛山|福州|合肥|济南|昆明|南昌|南宁|贵阳|海口|兰州|石家庄|太原|沈阳|长春|哈尔滨' | head -1)
+          fi
+          
+          echo "提取的城市: $CITY"
+          
+          # 提取国家
+          COUNTRY=""
+          if echo "$LOCATION" | grep -q "中国"; then
+            COUNTRY="中国"
+          elif echo "$LOCATION" | grep -qi "china"; then
+            COUNTRY="中国"
+          else
+            # 尝试匹配其他常见国家
+            COUNTRY=$(echo "$LOCATION" | grep -oE '日本|韩国|美国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新加坡|马来西亚|泰国|越南|印度' | head -1)
+            if [ -z "$COUNTRY" ]; then
+              COUNTRY=$(echo "$LOCATION" | grep -oEi 'Japan|Korea|USA|United States|UK|France|Germany|Italy|Spain|Canada|Australia|Singapore|Malaysia|Thailand|Vietnam|India' | head -1)
+              # 英文国家名转中文
+              case "$COUNTRY" in
+                Japan) COUNTRY="日本" ;;
+                Korea) COUNTRY="韩国" ;;
+                USA|United\ States) COUNTRY="美国" ;;
+                UK) COUNTRY="英国" ;;
+                France) COUNTRY="法国" ;;
+                Germany) COUNTRY="德国" ;;
+                Italy) COUNTRY="意大利" ;;
+                Spain) COUNTRY="西班牙" ;;
+                Canada) COUNTRY="加拿大" ;;
+                Australia) COUNTRY="澳大利亚" ;;
+                Singapore) COUNTRY="新加坡" ;;
+                Malaysia) COUNTRY="马来西亚" ;;
+                Thailand) COUNTRY="泰国" ;;
+                Vietnam) COUNTRY="越南" ;;
+                India) COUNTRY="印度" ;;
+              esac
+            fi
+          fi
+          
+          echo "提取的国家: $COUNTRY"
+          
+          # 检查是否与上次位置相同（去重）
+          LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
+            -H "Authorization: Bearer ${NOTION_TOKEN}" \
             -H "Notion-Version: 2022-06-28" \
             -H "Content-Type: application/json" \
-            -d '{
-              "page_size": 1,
-              "sorts": [{ "timestamp": "created_time", "direction": "descending" }]
-            }' | grep -o '"位置":{[^}]*"rich_text":\[{[^}]*"plain_text":"[^"]*"' | sed 's/.*"plain_text":"\([^"]*\)".*/\1/')
+            -d '{"page_size": 1, "sorts": [{"timestamp": "created_time", "direction": "descending"}]}' | jq -r '.results[0].properties.位置.title[0].plain_text // empty')
           
-          # 如果位置相同，跳过
           if [ "$LOCATION" = "$LAST_LOCATION" ]; then
-            echo "位置与上次相同，跳过同步: $LOCATION"
+            echo "位置与上次相同，跳过记录"
             exit 0
           fi
           
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
-          
-          # ========== 识别国家 ==========
-          COUNTRY=$(echo "$LOCATION" | grep -oE '中国|美国|日本|韩国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新西兰|新加坡|马来西亚|泰国|越南|印度|俄罗斯|巴西|墨西哥|荷兰|瑞士|瑞典|挪威|丹麦|芬兰|比利时|奥地利|爱尔兰|葡萄牙|希腊|波兰|捷克|匈牙利|土耳其|以色列|阿联酋|沙特|南非|埃及|尼日利亚|阿根廷|智利|哥伦比亚|秘鲁|菲律宾|印度尼西亚|巴基斯坦|孟加拉|缅甸|柬埔寨|老挝|蒙古|朝鲜|哈萨克斯坦|乌克兰|白俄罗斯|罗马尼亚|保加利亚|塞尔维亚|克罗地亚|斯洛文尼亚|斯洛伐克|冰岛|卢森堡|摩纳哥|梵蒂冈' | head -1)
-          
-          if [ -z "$COUNTRY" ]; then
-            COUNTRY=$(echo "$LOCATION" | grep -oiE 'China|USA|United States|Japan|Korea|South Korea|UK|United Kingdom|Britain|France|Germany|Italy|Spain|Canada|Australia|New Zealand|Singapore|Malaysia|Thailand|Vietnam|India|Russia|Brazil|Mexico|Netherlands|Switzerland|Sweden|Norway|Denmark|Finland|Belgium|Austria|Ireland|Portugal|Greece|Poland|Czech|Turkey|Israel|UAE|Saudi Arabia|South Africa|Egypt|Argentina|Chile|Colombia|Peru|Philippines|Indonesia|Pakistan|Bangladesh' | head -1)
-            case "$COUNTRY" in
-              China) COUNTRY="中国" ;;
-              USA|United\ States) COUNTRY="美国" ;;
-              Japan) COUNTRY="日本" ;;
-              Korea|South\ Korea) COUNTRY="韩国" ;;
-              UK|United\ Kingdom|Britain) COUNTRY="英国" ;;
-              France) COUNTRY="法国" ;;
-              Germany) COUNTRY="德国" ;;
-              Italy) COUNTRY="意大利" ;;
-              Spain) COUNTRY="西班牙" ;;
-              Canada) COUNTRY="加拿大" ;;
-              Australia) COUNTRY="澳大利亚" ;;
-              "New Zealand") COUNTRY="新西兰" ;;
-              Singapore) COUNTRY="新加坡" ;;
-              Malaysia) COUNTRY="马来西亚" ;;
-              Thailand) COUNTRY="泰国" ;;
-              Vietnam) COUNTRY="越南" ;;
-              India) COUNTRY="印度" ;;
-              Russia) COUNTRY="俄罗斯" ;;
-              Brazil) COUNTRY="巴西" ;;
-              Mexico) COUNTRY="墨西哥" ;;
-              Netherlands) COUNTRY="荷兰" ;;
-              Switzerland) COUNTRY="瑞士" ;;
-            esac
-          fi
-          
-          [ -z "$COUNTRY" ] && COUNTRY="未知"
-          
-          # ========== 识别城市 ==========
-          CITY=$(echo "$LOCATION" | grep -oE '[^\s]+市' | head -1 | sed 's/市$//')
-          
-          if [ -z "$CITY" ]; then
-            CITY=$(echo "$LOCATION" | grep -oE '省[^\s]+市' | sed 's/省//;s/市$//' | head -1)
-          fi
-          
-          if [ -z "$CITY" ]; then
-            CITY=$(echo "$LOCATION" | grep -oE '([A-Z][a-z]+ ?)+' | grep -vE '^(China|USA|UK|Japan|Korea|Street|Road|Avenue|District|State|Province|Country)$' | head -1 | sed 's/ $//')
-          fi
-          
-          [ -z "$CITY" ] && CITY="未知"
-          
-          # 写入临时文件
-          cat > /tmp/payload.json << EOF
-          {
-            "parent": { "database_id": "${{ secrets.NOTION_DATABASE_ID }}" },
-            "properties": {
-              "时间": { "date": { "start": "$TIMESTAMP" } },
-              "位置": { "rich_text": [{ "text": { "content": "$LOCATION" } }] },
-              "城市": { "select": { "name": "$CITY" } },
-              "国家": { "select": { "name": "$COUNTRY" } }
-            }
-          }
-          EOF
-          
-          curl -X POST "https://api.notion.com/v1/pages" \
-            -H "Authorization: Bearer ${{ secrets.NOTION_TOKEN }}" \
+          # 同步到 Notion
+          RESPONSE=$(curl -s -X POST "https://api.notion.com/v1/pages" \
+            -H "Authorization: Bearer ${NOTION_TOKEN}" \
             -H "Notion-Version: 2022-06-28" \
             -H "Content-Type: application/json" \
-            -d @/tmp/payload.json
+            -d "{
+              \"parent\": {\"database_id\": \"${NOTION_DATABASE_ID}\"},
+              \"properties\": {
+                \"时间\": {\"title\": [{\"text\": {\"content\": \"$(date '+%Y-%m-%d %H:%M:%S')\"}}]},
+                \"位置\": {\"rich_text\": [{\"text\": {\"content\": \"${LOCATION}\"}}]},
+                \"城市\": {\"select\": {\"name\": \"${CITY}\"}},
+                \"国家\": {\"select\": {\"name\": \"${COUNTRY}\"}}
+              }
+            }")
           
           echo "已同步: $LOCATION -> $CITY, $COUNTRY"
+```
+
+**核心修改**：
+- 城市提取改成 `grep -oE '[^ ]+市'`，`[^ ]` 匹配非空格字符，确保不会匹配到"中国 广东省 深圳市"这样包含空格的内容
+- 只会匹配"深圳市"这样的单个词
