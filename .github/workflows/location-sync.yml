@@ -42,11 +42,9 @@ jobs:
           elif echo "$LOCATION" | grep -qi "china"; then
             COUNTRY="中国"
           else
-            # 尝试匹配其他常见国家
             COUNTRY=$(echo "$LOCATION" | grep -oE '日本|韩国|美国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新加坡|马来西亚|泰国|越南|印度' | head -1)
             if [ -z "$COUNTRY" ]; then
               COUNTRY=$(echo "$LOCATION" | grep -oEi 'Japan|Korea|USA|United States|UK|France|Germany|Italy|Spain|Canada|Australia|Singapore|Malaysia|Thailand|Vietnam|India' | head -1)
-              # 英文国家名转中文
               case "$COUNTRY" in
                 Japan) COUNTRY="日本" ;;
                 Korea) COUNTRY="韩国" ;;
@@ -57,43 +55,3 @@ jobs:
                 Italy) COUNTRY="意大利" ;;
                 Spain) COUNTRY="西班牙" ;;
                 Canada) COUNTRY="加拿大" ;;
-                Australia) COUNTRY="澳大利亚" ;;
-                Singapore) COUNTRY="新加坡" ;;
-                Malaysia) COUNTRY="马来西亚" ;;
-                Thailand) COUNTRY="泰国" ;;
-                Vietnam) COUNTRY="越南" ;;
-                India) COUNTRY="印度" ;;
-              esac
-            fi
-          fi
-          
-          echo "提取的国家: $COUNTRY"
-          
-          # 检查是否与上次位置相同（去重）
-          LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
-            -H "Authorization: Bearer ${NOTION_TOKEN}" \
-            -H "Notion-Version: 2022-06-28" \
-            -H "Content-Type: application/json" \
-            -d '{"page_size": 1, "sorts": [{"timestamp": "created_time", "direction": "descending"}]}' | jq -r '.results[0].properties["位置"].title[0].plain_text // empty')
-          
-          if [ "$LOCATION" = "$LAST_LOCATION" ]; then
-            echo "位置与上次相同，跳过记录"
-            exit 0
-          fi
-          
-          # 同步到 Notion
-          RESPONSE=$(curl -s -X POST "https://api.notion.com/v1/pages" \
-            -H "Authorization: Bearer ${NOTION_TOKEN}" \
-            -H "Notion-Version: 2022-06-28" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"parent\": {\"database_id\": \"${NOTION_DATABASE_ID}\"},
-              \"properties\": {
-                \"时间\": {\"title\": [{\"text\": {\"content\": \"$(date '+%Y-%m-%d %H:%M:%S')\"}}]},
-                \"位置\": {\"rich_text\": [{\"text\": {\"content\": \"${LOCATION}\"}}]},
-                \"城市\": {\"select\": {\"name\": \"${CITY}\"}},
-                \"国家\": {\"select\": {\"name\": \"${COUNTRY}\"}}
-              }
-            }")
-          
-          echo "已同步: $LOCATION -> $CITY, $COUNTRY"
