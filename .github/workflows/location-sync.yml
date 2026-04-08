@@ -15,8 +15,8 @@ jobs:
         env:
           RAW_LOCATION: ${{ github.event.inputs.location }}
         run: |
-          # 从 JSON 中提取 location 值
-          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | tr '\n' ' ' | tr '\r' ' ')
+          # 从 JSON 中提取 location 值，处理 \n 和 \r 字面字符
+          LOCATION=$(echo "$RAW_LOCATION" | sed 's/.*"location":"\([^"]*\)".*/\1/' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
           
           # 截断过长的位置信息
           LOCATION=$(echo "$LOCATION" | cut -c1-1900)
@@ -40,13 +40,10 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S")
           
           # ========== 识别国家 ==========
-          # 中文国家名
           COUNTRY=$(echo "$LOCATION" | grep -oE '中国|美国|日本|韩国|英国|法国|德国|意大利|西班牙|加拿大|澳大利亚|新西兰|新加坡|马来西亚|泰国|越南|印度|俄罗斯|巴西|墨西哥|荷兰|瑞士|瑞典|挪威|丹麦|芬兰|比利时|奥地利|爱尔兰|葡萄牙|希腊|波兰|捷克|匈牙利|土耳其|以色列|阿联酋|沙特|南非|埃及|尼日利亚|阿根廷|智利|哥伦比亚|秘鲁|菲律宾|印度尼西亚|巴基斯坦|孟加拉|缅甸|柬埔寨|老挝|蒙古|朝鲜|哈萨克斯坦|乌克兰|白俄罗斯|罗马尼亚|保加利亚|塞尔维亚|克罗地亚|斯洛文尼亚|斯洛伐克|冰岛|卢森堡|摩纳哥|梵蒂冈' | head -1)
           
-          # 如果没找到，尝试匹配英文国家名
           if [ -z "$COUNTRY" ]; then
             COUNTRY=$(echo "$LOCATION" | grep -oiE 'China|USA|United States|Japan|Korea|South Korea|UK|United Kingdom|Britain|France|Germany|Italy|Spain|Canada|Australia|New Zealand|Singapore|Malaysia|Thailand|Vietnam|India|Russia|Brazil|Mexico|Netherlands|Switzerland|Sweden|Norway|Denmark|Finland|Belgium|Austria|Ireland|Portugal|Greece|Poland|Czech|Turkey|Israel|UAE|Saudi Arabia|South Africa|Egypt|Argentina|Chile|Colombia|Peru|Philippines|Indonesia|Pakistan|Bangladesh' | head -1)
-            # 英文转中文
             case "$COUNTRY" in
               China) COUNTRY="中国" ;;
               USA|United\ States) COUNTRY="美国" ;;
@@ -76,22 +73,19 @@ jobs:
           [ -z "$COUNTRY" ] && COUNTRY="未知"
           
           # ========== 识别城市 ==========
-          # 优先匹配中文 "XX市" 格式
           CITY=$(echo "$LOCATION" | grep -oE '[^\s]+市' | head -1 | sed 's/市$//')
           
-          # 如果没找到，尝试匹配 "省XX市" 格式
           if [ -z "$CITY" ]; then
             CITY=$(echo "$LOCATION" | grep -oE '省[^\s]+市' | sed 's/省//;s/市$//' | head -1)
           fi
           
-          # 如果还没找到，尝试匹配国际城市（英文）
           if [ -z "$CITY" ]; then
             CITY=$(echo "$LOCATION" | grep -oE '([A-Z][a-z]+ ?)+' | grep -vE '^(China|USA|UK|Japan|Korea|Street|Road|Avenue|District|State|Province|Country)$' | head -1 | sed 's/ $//')
           fi
           
           [ -z "$CITY" ] && CITY="未知"
           
-          # 写入临时文件避免 JSON 转义问题
+          # 写入临时文件
           cat > /tmp/payload.json << EOF
           {
             "parent": { "database_id": "${{ secrets.NOTION_DATABASE_ID }}" },
