@@ -28,8 +28,6 @@ jobs:
           # 截断过长的位置信息
           LOCATION=$(echo "$LOCATION" | cut -c1-1900)
           
-          echo "位置: $LOCATION"
-          
           # 提取城市
           CITY=$(echo "$LOCATION" | grep -oE '[^ ]+市' | head -1 | sed 's/市$//')
           
@@ -38,8 +36,6 @@ jobs:
           fi
           
           [ -z "$CITY" ] && CITY="未知"
-          
-          echo "城市: $CITY"
           
           # 提取国家
           COUNTRY=""
@@ -53,8 +49,6 @@ jobs:
           
           [ -z "$COUNTRY" ] && COUNTRY="未知"
           
-          echo "国家: $COUNTRY"
-          
           # 提取简略位置
           BRIEF_LOCATION="$LOCATION"
           
@@ -67,8 +61,6 @@ jobs:
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | cut -c1-1900)
           
-          echo "简略位置: $BRIEF_LOCATION"
-          
           # 查询Notion最新记录，检查是否重复
           LAST_LOCATION=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
             -H "Authorization: Bearer ${NOTION_TOKEN}" \
@@ -76,10 +68,8 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"page_size": 1, "sorts": [{"timestamp": "created_time", "direction": "descending"}]}' | grep -oP '(?<="plain_text":")[^"]*' | head -1)
           
-          echo "上次位置: $LAST_LOCATION"
-          
           if [ "$LOCATION" = "$LAST_LOCATION" ]; then
-            echo "位置与上次相同，跳过记录"
+            echo "位置未变化，跳过记录"
             exit 0
           fi
           
@@ -99,10 +89,10 @@ jobs:
           }
           EOF
           
-          curl -X POST "https://api.notion.com/v1/pages" \
+          curl -s -X POST "https://api.notion.com/v1/pages" \
             -H "Authorization: Bearer ${NOTION_TOKEN}" \
             -H "Notion-Version: 2022-06-28" \
             -H "Content-Type: application/json" \
             -d @/tmp/payload.json
           
-          echo "已同步: $LOCATION -> 简略: $BRIEF_LOCATION, 城市: $CITY, 国家: $COUNTRY"
+          echo "同步完成"
