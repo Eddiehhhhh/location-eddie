@@ -128,7 +128,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{
               \"parent\": {\"database_id\": \"${NOTION_DATABASE_ID}\"},
-              \"icon\": {\"type\": \"icon\", \"icon\": {\"type\": \"external\", \"external\": {\"url\": \"https://www.notion.so/icons/map-pin-alternate_gray.svg\"}}},
+              \"icon\": {\"type\": \"icon\", \"icon\": {\"name\": \"map-pin-alternate\", \"color\": \"gray\"}},
               \"properties\": {
                 \"时间\": {\"date\": {\"start\": \"${CURRENT_TIME}\"}},
                 \"位置\": {\"rich_text\": [{\"text\": {\"content\": \"${LOCATION_ESCAPED}\"}}]},
