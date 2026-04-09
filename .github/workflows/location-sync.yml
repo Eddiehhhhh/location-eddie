@@ -118,7 +118,7 @@ jobs:
           # 获取当前时间
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
           
-          # 同步到 Notion
+          # 同步到 Notion（添加位置图标📍）
           LOCATION_ESCAPED=$(echo "$LOCATION" | sed 's/"/\\"/g')
           BRIEF_ESCAPED=$(echo "$BRIEF_LOCATION" | sed 's/"/\\"/g')
           
@@ -128,6 +128,7 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{
               \"parent\": {\"database_id\": \"${NOTION_DATABASE_ID}\"},
+              \"icon\": {\"type\": \"emoji\", \"emoji\": \"📍\"},
               \"properties\": {
                 \"时间\": {\"date\": {\"start\": \"${CURRENT_TIME}\"}},
                 \"位置\": {\"rich_text\": [{\"text\": {\"content\": \"${LOCATION_ESCAPED}\"}}]},
