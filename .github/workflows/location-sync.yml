@@ -86,51 +86,39 @@ jobs:
           # 清理多余空格
           BRIEF_LOCATION=$(echo "$BRIEF_LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
           
-          # 去重：查询Notion最后一条记录
-          python3 << 'PYEOF'
-import requests, os
-
-try:
-    token = os.environ.get("NOTION_TOKEN")
-    db_id = os.environ.get("NOTION_DATABASE_ID")
-    current_location = os.environ.get("LOCATION", "")
-    
-    resp = requests.post(
-        f"https://api.notion.com/v1/databases/{db_id}/query",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
-        },
-        json={"page_size": 1},
-        timeout=10
-    )
-    data = resp.json()
-    if data.get("results"):
-        props = data["results"][0]["properties"]
-        location_list = props.get("位置", {}).get("rich_text", [])
-        if location_list:
-            last_location = location_list[0].get("text", {}).get("content", "")
-            last_location = last_location.replace("\n", " ").replace("\r", " ").strip()
-            current_location = current_location.replace("\n", " ").replace("\r", " ").strip()
-            if last_location == current_location:
-                print(f"位置重复，跳过记录: {current_location}")
-                exit(1)  # 用非0退出码跳过后续
-            else:
-                print(f"新位置: {current_location} (上次: {last_location})")
-except Exception as e:
-    print(f"检查去重失败: {e}")
-PYEOF
+          # 去重：使用curl查询Notion最后一条记录
+          LAST_RECORD=$(curl -s -X POST "https://api.notion.com/v1/databases/${NOTION_DATABASE_ID}/query" \
+            -H "Authorization: Bearer ${NOTION_TOKEN}" \
+            -H "Notion-Version: 2022-06-28" \
+            -H "Content-Type: application/json" \
+            -d '{"page_size":1}')
           
-          # 如果Python退出码为1，表示重复，跳过
-          if [ $? -eq 1 ]; then
+          # 使用python3一行命令提取位置
+          LAST_LOCATION=$(echo "$LAST_RECORD" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          if d.get('results'):
+              props = d['results'][0]['properties']
+              loc = props.get('位置', {}).get('rich_text', [])
+              if loc:
+                  print(loc[0].get('text', {}).get('content', ''))
+          " 2>/dev/null)
+          
+          # 清理LAST_LOCATION
+          LAST_LOCATION=$(echo "$LAST_LOCATION" | tr '\n' ' ' | tr '\r' ' ' | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
+          
+          # 如果位置相同，跳过
+          if [ "$LAST_LOCATION" = "$LOCATION" ]; then
+            echo "位置重复，跳过记录: $LOCATION"
             exit 0
           fi
+          
+          echo "新位置: $LOCATION (上次: $LAST_LOCATION)"
           
           # 获取当前时间
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
           
-          # 同步到 Notion（注意转义特殊字符）
+          # 同步到 Notion
           LOCATION_ESCAPED=$(echo "$LOCATION" | sed 's/"/\\"/g')
           BRIEF_ESCAPED=$(echo "$BRIEF_LOCATION" | sed 's/"/\\"/g')
           
