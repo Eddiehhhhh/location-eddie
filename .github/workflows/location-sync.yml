@@ -18,15 +18,27 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
-          RAW_INPUT='${{ github.event.client_payload.location || inputs.location }}'
-          
-          # 从JSON中提取location字段值
-          LOCATION=$(echo "$RAW_INPUT" | grep -oP '(?<="location":")[^"]*' | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
-          
-          # 如果提取失败，直接用原始输入
-          if [ -z "$LOCATION" ]; then
-            LOCATION=$(echo "$RAW_INPUT" | sed 's/\\n/ /g' | sed 's/\\r/ /g' | tr '\n' ' ' | tr '\r' ' ')
-          fi
+          # Read the payload from the runner file so the generated step script never contains an address.
+          RAW_INPUT=$(python3 - "$GITHUB_EVENT_PATH" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as event_file:
+              event = json.load(event_file)
+          dispatch = event.get("client_payload") or {}
+          manual = event.get("inputs") or {}
+          location = dispatch.get("location") or manual.get("location") or ""
+          if isinstance(location, str) and location.lstrip().startswith("{"):
+              try:
+                  wrapped = json.loads(location)
+              except ValueError:
+                  wrapped = {}
+              if isinstance(wrapped, dict) and isinstance(wrapped.get("location"), str):
+                  location = wrapped["location"] or location
+          print(location)
+          PY
+          )
+          LOCATION=$(printf '%s' "$RAW_INPUT" | sed 's/\\n/ /g; s/\\r/ /g' | tr '\n\r' '  ')
           
           # 清理多余空格
           LOCATION=$(echo "$LOCATION" | sed 's/  */ /g' | sed 's/^ *//' | sed 's/ *$//')
@@ -109,11 +121,9 @@ jobs:
           
           # 如果位置相同，跳过
           if [ "$LAST_LOCATION" = "$LOCATION" ]; then
-            echo "位置重复，跳过记录: $LOCATION"
+            echo "位置重复，跳过记录"
             exit 0
           fi
-          
-          echo "新位置: $LOCATION (上次: $LAST_LOCATION)"
           
           # 获取当前时间
           CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
@@ -138,4 +148,4 @@ jobs:
               }
             }")
           
-          echo "已同步: $LOCATION -> 简略: $BRIEF_LOCATION, 城市: $CITY, 国家: $COUNTRY"
+          echo "位置记录已同步"
